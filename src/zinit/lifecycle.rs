@@ -9,6 +9,7 @@ use crate::zinit::state::{State, Target};
 use crate::zinit::types::Watcher;
 use crate::zinit::types::{ProcessStats, ServiceStats, ServiceTable};
 use std::collections::HashMap;
+use std::time::Duration;
 use sysinfo::{self, PidExt, ProcessExt, System, SystemExt};
 
 // Define a local extension trait for WaitStatus
@@ -20,6 +21,13 @@ impl WaitStatusExt for WaitStatus {
     fn success(&self) -> bool {
         matches!(self, WaitStatus::Exited(_, 0))
     }
+}
+
+fn is_crash(status: &WaitStatus) -> bool {
+    // A zero exit is successful, even when a regular service will be restarted.
+    // Only failed exits and signal terminations can trigger on_crash.
+    matches!(status, WaitStatus::Exited(_, code) if *code != 0)
+        || matches!(status, WaitStatus::Signaled(_, _, _))
 }
 use anyhow::Result;
 #[cfg(target_os = "linux")]
@@ -157,6 +165,7 @@ impl LifecycleManager {
 
         let mut service = service.write().await;
         service.set_target(Target::Down);
+        service.coordinated_stop = true;
 
         // Get the main process PID
         let pid = service.pid;
@@ -283,12 +292,14 @@ impl LifecycleManager {
             .get(name.as_ref())
             .ok_or_else(|| ZInitError::unknown_service(name.as_ref()))?;
 
-        let service = service.read().await;
+        let mut service = service.write().await;
         if service.pid == Pid::from_raw(0) {
             return Err(ZInitError::service_is_down(name.as_ref()).into());
         }
 
-        self.pm.signal(service.pid, signal)
+        self.pm.signal(service.pid, signal)?;
+        service.coordinated_signal = Some(signal);
+        Ok(())
     }
 
     /// List all services
@@ -545,7 +556,7 @@ impl LifecycleManager {
         *self.shutdown.write().await = true;
 
         let mut state_channels: HashMap<String, Watcher<State>> = HashMap::new();
-        let mut shutdown_timeouts: HashMap<String, u64> = HashMap::new();
+        let mut shutdown_timeouts: HashMap<String, Duration> = HashMap::new();
 
         let table = self.services.read().await;
         for (name, service) in table.iter() {
@@ -579,7 +590,7 @@ impl LifecycleManager {
         &self,
         mut dag: ProcessDAG,
         mut state_channels: HashMap<String, Watcher<State>>,
-        mut shutdown_timeouts: HashMap<String, u64>,
+        mut shutdown_timeouts: HashMap<String, Duration>,
     ) -> Result<()> {
         let (tx, mut rx) = mpsc::unbounded_channel();
         tx.send(DUMMY_ROOT.into())?;
@@ -622,9 +633,8 @@ impl LifecycleManager {
 
                     // Add a timeout to ensure we don't wait forever
                     let _ = tokio::time::timeout(
-                        std::time::Duration::from_secs(
-                            shutdown_timeout.unwrap_or(config::DEFAULT_SHUTDOWN_TIMEOUT) + 2,
-                        ),
+                        shutdown_timeout.unwrap_or(config::DEFAULT_SHUTDOWN_TIMEOUT)
+                            + Duration::from_secs(2),
                         kill_task,
                     )
                     .await;
@@ -650,7 +660,7 @@ impl LifecycleManager {
         name: String,
         ch: mpsc::UnboundedSender<String>,
         mut rx: Watcher<State>,
-        shutdown_timeout: u64,
+        shutdown_timeout: Duration,
     ) {
         debug!("kill_wait {}", name);
 
@@ -658,16 +668,13 @@ impl LifecycleManager {
         let stop_result = self.stop(name.clone()).await;
 
         // Wait for the service to become inactive or timeout
-        let fut = timeout(
-            std::time::Duration::from_secs(shutdown_timeout),
-            async move {
-                while let Some(state) = rx.next().await {
-                    if !state.is_active() {
-                        return;
-                    }
+        let fut = timeout(shutdown_timeout, async move {
+            while let Some(state) = rx.next().await {
+                if !state.is_active() {
+                    return;
                 }
-            },
-        );
+            }
+        });
 
         match stop_result {
             Ok(_) => {
@@ -700,7 +707,7 @@ impl LifecycleManager {
         name: String,
         ch: mpsc::UnboundedSender<String>,
         rx: Watcher<State>,
-        shutdown_timeout: u64,
+        shutdown_timeout: Duration,
     ) {
         Self::kill_wait_enhanced(self, name, ch, rx, shutdown_timeout).await
     }
@@ -808,6 +815,43 @@ impl LifecycleManager {
         }
     }
 
+    /// Start each crash hook independently so a slow hook cannot block the others.
+    async fn run_crash_hooks(&self, name: &str, config: &config::Service, log: Log) {
+        for command in &config.on_crash {
+            let child = self
+                .pm
+                .run(
+                    Process::new(command, &config.dir, Some(config.env.clone())),
+                    log.clone(),
+                )
+                .await;
+
+            match child {
+                Ok(child) => {
+                    let name = name.to_owned();
+                    let command = command.clone();
+                    tokio::spawn(async move {
+                        match child.wait().await {
+                            Ok(status) if status.success() => {}
+                            Ok(status) => error!(
+                                "on_crash command {:?} for service '{}' exited with {:?}",
+                                command, name, status
+                            ),
+                            Err(err) => error!(
+                                "failed to wait for on_crash command {:?} for service '{}': {}",
+                                command, name, err
+                            ),
+                        }
+                    });
+                }
+                Err(err) => error!(
+                    "failed to start on_crash command {:?} for service '{}': {}",
+                    command, name, err
+                ),
+            }
+        }
+    }
+
     /// Watch a service and manage its lifecycle
     async fn watch_service(self, name: String, input: Arc<RwLock<ZInitService>>) {
         let name = name.clone();
@@ -882,7 +926,11 @@ impl LifecycleManager {
             let child = self
                 .pm
                 .run(
-                    Process::new(&config.exec, &config.dir, Some(config.env.clone())),
+                    Process::from_args(
+                        config.exec.clone(),
+                        config.dir.clone(),
+                        Some(config.env.clone()),
+                    ),
                     log.clone(),
                 )
                 .await;
@@ -891,6 +939,8 @@ impl LifecycleManager {
                 Ok(child) => {
                     service.force_set_state(State::Spawned);
                     service.set_pid(child.pid);
+                    service.coordinated_stop = false;
+                    service.coordinated_signal = None;
                     child
                 }
                 Err(err) => {
@@ -925,8 +975,30 @@ impl LifecycleManager {
                 handler.abort();
             }
 
+            let shutting_down = *self.shutdown.read().await;
             let mut service = input.write().await;
             service.clear_pid();
+
+            // SIGTERM, SIGINT, SIGQUIT, and the configured stop signal remain
+            // controlled requests if the process handles one and later exits.
+            // waitpid reports only the final exit status, not whether a prior
+            // signal caused the process to choose that exit code.
+            let signaled_by_zinit = match (&result, service.coordinated_signal) {
+                (Ok(WaitStatus::Signaled(_, actual, _)), Some(sent)) => *actual == sent,
+                (Ok(WaitStatus::Exited(_, _)), Some(sent)) => {
+                    matches!(
+                        sent,
+                        signal::Signal::SIGTERM | signal::Signal::SIGINT | signal::Signal::SIGQUIT
+                    ) || signal::Signal::from_str(&config.signal.stop.to_uppercase())
+                        .map_or(false, |stop| sent == stop)
+                }
+                _ => false,
+            };
+            let run_crash_hooks = matches!(&result, Ok(status) if is_crash(status))
+                && !service.coordinated_stop
+                && !signaled_by_zinit
+                && service.target == Target::Up
+                && !shutting_down;
 
             match result {
                 Err(err) => {
@@ -943,6 +1015,9 @@ impl LifecycleManager {
             };
 
             drop(service);
+            if run_crash_hooks {
+                self.run_crash_hooks(&name, &config, log).await;
+            }
             if config.one_shot {
                 // we don't need to restart the service anymore
                 self.notify.notify_waiters();

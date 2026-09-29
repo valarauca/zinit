@@ -1,13 +1,13 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use serde_yaml as yaml;
 use std::collections::HashMap;
 use std::ffi::OsStr;
-use std::fs::{self, File};
+use std::fs;
 use std::path::Path;
+use std::time::Duration;
 pub type Services = HashMap<String, Service>;
 
-pub const DEFAULT_SHUTDOWN_TIMEOUT: u64 = 10; // in seconds
+pub const DEFAULT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
@@ -32,21 +32,25 @@ pub enum Log {
     Stdout,
 }
 
-fn default_shutdown_timeout_fn() -> u64 {
+fn default_shutdown_timeout_fn() -> Duration {
     DEFAULT_SHUTDOWN_TIMEOUT
 }
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(default)]
 pub struct Service {
-    /// command to run
-    pub exec: String,
+    /// executable followed by its arguments
+    pub exec: Vec<String>,
     /// test command (optional)
     #[serde(default)]
     pub test: String,
     #[serde(rename = "oneshot")]
     pub one_shot: bool,
-    #[serde(default = "default_shutdown_timeout_fn")]
-    pub shutdown_timeout: u64,
+    #[serde(
+        default = "default_shutdown_timeout_fn",
+        deserialize_with = "duration_str::deserialize_duration"
+    )]
+    pub shutdown_timeout: Duration,
+    pub on_crash: Vec<String>,
     pub after: Vec<String>,
     pub signal: Signal,
     pub log: Log,
@@ -54,11 +58,28 @@ pub struct Service {
     pub dir: String,
 }
 
+impl Default for Service {
+    fn default() -> Self {
+        Self {
+            exec: Vec::new(),
+            test: String::new(),
+            one_shot: false,
+            shutdown_timeout: DEFAULT_SHUTDOWN_TIMEOUT,
+            on_crash: Vec::new(),
+            after: Vec::new(),
+            signal: Signal::default(),
+            log: Log::default(),
+            env: HashMap::new(),
+            dir: String::new(),
+        }
+    }
+}
+
 impl Service {
     pub fn validate(&self) -> Result<()> {
         use nix::sys::signal::Signal;
         use std::str::FromStr;
-        if self.exec.is_empty() {
+        if self.exec.first().map_or(true, String::is_empty) {
             bail!("missing exec directive");
         }
 
@@ -79,8 +100,8 @@ pub fn load<T: AsRef<Path>>(t: T) -> Result<(String, Service)> {
         None => bail!("invalid file name: {}", p.to_str().unwrap()),
     };
 
-    let file = File::open(p)?;
-    let service: Service = yaml::from_reader(&file)?;
+    let content = fs::read_to_string(p)?;
+    let service: Service = toml::from_str(&content)?;
     service.validate()?;
     Ok((String::from(name), service))
 }
@@ -100,7 +121,7 @@ pub fn load_dir<T: AsRef<Path>>(p: T) -> Result<Services> {
 
         let fp = entry.path();
 
-        if !matches!(fp.extension(), Some(ext) if ext == OsStr::new("yaml")) {
+        if !matches!(fp.extension(), Some(ext) if ext == OsStr::new("toml")) {
             continue;
         }
 
@@ -116,4 +137,51 @@ pub fn load_dir<T: AsRef<Path>>(p: T) -> Result<Services> {
     }
 
     Ok(services)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn loads_toml_service_with_argument_array_and_duration() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("worker.toml");
+        fs::write(
+            &file,
+            r#"
+exec = ["/bin/echo", "two words"]
+shutdown_timeout = "1m 250ms"
+on_crash = ["/bin/false", "sh -c 'exit 2'"]
+
+[signal]
+stop = "SIGINT"
+"#,
+        )
+        .unwrap();
+        fs::write(dir.path().join("ignored.yaml"), "exec: /bin/false").unwrap();
+
+        let services = load_dir(dir.path()).unwrap();
+        assert_eq!(services.len(), 1);
+        let worker = &services["worker"];
+        assert_eq!(worker.exec, ["/bin/echo", "two words"]);
+        assert_eq!(worker.shutdown_timeout, Duration::from_millis(60_250));
+        assert_eq!(worker.on_crash.len(), 2);
+        assert_eq!(worker.signal.stop, "SIGINT");
+    }
+
+    #[test]
+    fn rejects_invalid_duration_and_empty_exec() {
+        assert!(toml::from_str::<Service>("exec = []")
+            .unwrap()
+            .validate()
+            .is_err());
+        assert!(toml::from_str::<Service>("exec = ['echo']\nshutdown_timeout = 'soon'").is_err());
+        assert_eq!(
+            toml::from_str::<Service>("exec = ['echo']")
+                .unwrap()
+                .shutdown_timeout,
+            DEFAULT_SHUTDOWN_TIMEOUT
+        );
+    }
 }

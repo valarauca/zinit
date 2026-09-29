@@ -12,7 +12,7 @@ ZOS Init is an init system and process supervisor designed for environments that
 - **Unix socket control interface** — for local CLI interaction
 - **HTTP proxy** — JSON-RPC 2.0 API for remote management
 - **CLI commands** — `init`, `list`, `start`, `stop`, `monitor`, `proxy`, and more
-- **Declarative service configuration** via YAML files
+- **Declarative service configuration** via TOML files
 - **Container mode** with appropriate signal handling
 - **Configurable logging** including ringbuffer and stdout options
 
@@ -70,16 +70,16 @@ More information about all the available commands can be found [here](docs/cmd.m
 
 ### Service Configuration
 
-ZOS Init uses YAML files for service configuration. Here's a basic example:
+ZOS Init uses TOML files for service configuration. Here's a basic example:
 
-```yaml
-# Service configuration (e.g., /etc/zinit/myservice.yaml)
-exec: "/usr/bin/myservice --option value"   # Command to run (required)
-test: "/usr/bin/check-myservice"            # Health check command (optional)
-oneshot: false                              # Whether to restart on exit (default: false)
-after:                                      # Services that must be running first (optional)
-  - dependency1
-  - dependency2
+```toml
+# /etc/zinit/myservice.toml
+exec = ["/usr/bin/myservice", "--option", "value"]
+test = "/usr/bin/check-myservice"
+oneshot = false
+shutdown_timeout = "30s"
+after = ["dependency1", "dependency2"]
+on_crash = ["/usr/local/bin/notify-queue"]
 ```
 
 For more information on how to configure service files, see the [service file reference](docs/services.md) documentation.

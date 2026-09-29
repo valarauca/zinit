@@ -22,9 +22,14 @@ mod buffer;
 pub use buffer::Logs;
 
 pub struct Process {
-    cmd: String,
+    cmd: CommandLine,
     env: HashMap<String, String>,
     cwd: String,
+}
+
+enum CommandLine {
+    ShellWords(String),
+    Args(Vec<String>),
 }
 type WaitChannel = oneshot::Receiver<WaitStatus>;
 
@@ -51,8 +56,20 @@ impl Process {
 
         Process {
             env,
-            cmd: cmd.into(),
+            cmd: CommandLine::ShellWords(cmd.into()),
             cwd: cwd.into(),
+        }
+    }
+
+    pub fn from_args(
+        args: Vec<String>,
+        cwd: String,
+        env: Option<HashMap<String, String>>,
+    ) -> Process {
+        Process {
+            env: env.unwrap_or_default(),
+            cmd: CommandLine::Args(args),
+            cwd,
         }
     }
 }
@@ -147,7 +164,12 @@ impl ProcessManager {
     }
 
     pub async fn run(&self, cmd: Process, log: Log) -> Result<Child> {
-        let args = shlex::split(&cmd.cmd).context("failed to parse command")?;
+        let args = match cmd.cmd {
+            CommandLine::ShellWords(line) => {
+                shlex::split(&line).context("failed to parse command")?
+            }
+            CommandLine::Args(args) => args,
+        };
         if args.is_empty() {
             bail!("invalid command");
         }

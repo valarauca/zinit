@@ -145,20 +145,20 @@ async fn start_zinit(socket_path: &str, config_dir: &str) -> Result<()> {
     Ok(())
 }
 
-async fn create_service_config(config_dir: &str, name: &str, command: &str) -> Result<()> {
-    let config_path = format!("{}/{}.yaml", config_dir, name);
+async fn create_service_config(config_dir: &str, name: &str, command: &[&str]) -> Result<()> {
+    let config_path = format!("{}/{}.toml", config_dir, name);
     let config_content = format!(
-        r#"exec: {}
-oneshot: false
-shutdown_timeout: 10
-after: []
-signal:
-  stop: sigterm
-log: ring
-env: {{}}
-dir: /
+        r#"exec = {}
+oneshot = false
+shutdown_timeout = "10s"
+after = []
+log = "ring"
+dir = "/"
+
+[signal]
+stop = "sigterm"
 "#,
-        command
+        serde_json::to_string(command)?
     );
 
     fs::write(config_path, config_content).await?;
@@ -188,13 +188,13 @@ async fn main() -> Result<()> {
     println!("Creating service configurations...");
     
     // Create a find service
-    create_service_config(&config_dir, "find-service", "find / -name \"*.txt\" -type f").await?;
+    create_service_config(&config_dir, "find-service", &["find", "/", "-name", "*.txt", "-type", "f"]).await?;
     
     // Create a sleep service with echo
     create_service_config(
         &config_dir, 
         "sleep-service", 
-        "sh -c 'echo Starting sleep; sleep 30; echo Finished sleep'"
+        &["sh", "-c", "echo Starting sleep; sleep 30; echo Finished sleep"]
     ).await?;
 
     // Wait for zinit to load the configurations

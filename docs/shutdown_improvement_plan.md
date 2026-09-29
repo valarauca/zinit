@@ -155,7 +155,7 @@ async fn kill_process_tree(
     &self,
     mut dag: ProcessDAG,
     mut state_channels: HashMap<String, Watcher<State>>,
-    mut shutdown_timeouts: HashMap<String, u64>,
+    mut shutdown_timeouts: HashMap<String, std::time::Duration>,
 ) -> Result<()> {
     let (tx, mut rx) = mpsc::unbounded_channel();
     tx.send(DUMMY_ROOT.into())?;
@@ -192,7 +192,7 @@ async fn kill_process_tree(
                 
                 // Add a timeout to ensure we don't wait forever
                 let _ = tokio::time::timeout(
-                    std::time::Duration::from_secs(shutdown_timeout.unwrap_or(config::DEFAULT_SHUTDOWN_TIMEOUT) + 2),
+                    shutdown_timeout.unwrap_or(config::DEFAULT_SHUTDOWN_TIMEOUT) + std::time::Duration::from_secs(2),
                     kill_task
                 ).await;
             }
@@ -220,7 +220,7 @@ async fn kill_wait_enhanced(
     name: String,
     ch: mpsc::UnboundedSender<String>,
     mut rx: Watcher<State>,
-    shutdown_timeout: u64,
+    shutdown_timeout: std::time::Duration,
 ) {
     debug!("kill_wait {}", name);
 
@@ -229,7 +229,7 @@ async fn kill_wait_enhanced(
     
     // Wait for the service to become inactive or timeout
     let fut = timeout(
-        std::time::Duration::from_secs(shutdown_timeout),
+        shutdown_timeout,
         async move {
             while let Some(state) = rx.next().await {
                 if !state.is_active() {

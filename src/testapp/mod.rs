@@ -36,22 +36,43 @@ pub async fn start_zinit(socket_path: &str, config_dir: &str) -> Result<()> {
     Ok(())
 }
 
-pub async fn create_service_config(config_dir: &str, name: &str, command: &str) -> Result<()> {
-    let config_path = format!("{}/{}.yaml", config_dir, name);
+pub async fn create_service_config(config_dir: &str, name: &str, command: &[&str]) -> Result<()> {
+    let config_path = format!("{}/{}.toml", config_dir, name);
     let config_content = format!(
-        r#"exec: {}
-oneshot: false
-shutdown_timeout: 10
-after: []
-signal:
-  stop: sigterm
-log: ring
-env: {{}}
-dir: /
+        r#"exec = {}
+oneshot = false
+shutdown_timeout = "10s"
+after = []
+log = "ring"
+dir = "/"
+
+[signal]
+stop = "sigterm"
 "#,
-        command
+        serde_json::to_string(command)?
     );
 
     tokio::fs::write(config_path, config_content).await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::zinit::config;
+
+    #[tokio::test]
+    async fn generated_config_preserves_exec_arguments() {
+        let dir = tempfile::tempdir().unwrap();
+        create_service_config(
+            dir.path().to_str().unwrap(),
+            "worker",
+            &["sh", "-c", "echo two words"],
+        )
+        .await
+        .unwrap();
+
+        let (_, service) = config::load(dir.path().join("worker.toml")).unwrap();
+        assert_eq!(service.exec, ["sh", "-c", "echo two words"]);
+    }
 }

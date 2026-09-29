@@ -128,7 +128,7 @@ RUN chmod +x /usr/local/bin/zinit
 RUN mkdir -p /etc/zinit
 
 # Add your service configurations
-COPY services/*.yaml /etc/zinit/
+COPY services/*.toml /etc/zinit/
 
 # Set zinit as the entrypoint
 ENTRYPOINT ["/usr/local/bin/zinit", "init", "--container"]
@@ -181,9 +181,9 @@ sudo mkdir -p /etc/zinit
 2. Create a simple service configuration:
 
 ```bash
-cat << EOF | sudo tee /etc/zinit/hello.yaml
-exec: "echo 'Hello from Zinit!'"
-oneshot: true
+cat << EOF | sudo tee /etc/zinit/hello.toml
+exec = ["echo", "Hello from Zinit!"]
+oneshot = true
 EOF
 ```
 

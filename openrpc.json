@@ -479,14 +479,20 @@
           "required": true,
           "schema": {
             "type": "object",
+            "required": ["exec"],
             "properties": {
               "exec": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Executable followed by its arguments"
+              },
+              "test": {
                 "type": "string",
-                "description": "Command to run"
+                "description": "Readiness-check command"
               },
               "oneshot": {
                 "type": "boolean",
-                "description": "Whether the service should be restarted"
+                "description": "Run once without automatic restart"
               },
               "after": {
                 "type": "array",
@@ -497,7 +503,7 @@
               },
               "log": {
                 "type": "string",
-                "enum": ["null", "ring", "stdout"],
+                "enum": ["none", "ring", "stdout"],
                 "description": "How to handle service output"
               },
               "env": {
@@ -507,9 +513,25 @@
                 },
                 "description": "Environment variables for the service"
               },
+              "dir": {
+                "type": "string",
+                "description": "Working directory for the service"
+              },
+              "signal": {
+                "type": "object",
+                "properties": {
+                  "stop": { "type": "string" }
+                },
+                "description": "Signal sent when stopping the service"
+              },
               "shutdown_timeout": {
-                "type": "integer",
-                "description": "Maximum time to wait for service to stop during shutdown"
+                "type": "string",
+                "description": "Maximum time to wait for service to stop during shutdown, with units (for example 30s)"
+              },
+              "on_crash": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Commands to run when the service exits unexpectedly with an error"
               }
             }
           }

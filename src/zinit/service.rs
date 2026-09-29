@@ -2,6 +2,7 @@ use crate::zinit::config;
 use crate::zinit::state::{State, Target};
 use crate::zinit::types::Watched;
 use anyhow::{Context, Result};
+use nix::sys::signal::Signal;
 use nix::unistd::Pid;
 
 /// Represents a service managed by ZInit
@@ -17,6 +18,12 @@ pub struct ZInitService {
 
     /// Whether the service is scheduled for execution
     pub scheduled: bool,
+
+    /// Whether Zinit requested termination of the current process
+    pub coordinated_stop: bool,
+
+    /// Last signal sent through the control API to the current process
+    pub coordinated_signal: Option<Signal>,
 
     /// Current state of the service
     state: Watched<State>,
@@ -49,6 +56,8 @@ impl ZInitService {
             service,
             target: Target::Up,
             scheduled: false,
+            coordinated_stop: false,
+            coordinated_signal: None,
         }
     }
 

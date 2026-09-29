@@ -10,7 +10,7 @@ async fn main() -> Result<()> {
     // Create a new service
     let service_name = "example-http-service";
     let service_config = json!({
-        "exec": "echo 'Hello from HTTP service'",
+        "exec": ["echo", "Hello from HTTP service"],
         "oneshot": true,
         "after": ["network"]
     })

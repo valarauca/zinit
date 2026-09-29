@@ -193,7 +193,7 @@ pub trait ZinitServiceApi {
     #[method(name = "stop")]
     async fn stop(&self, name: String) -> RpcResult<()>;
 
-    /// Load and monitor a new service from its configuration file (e.g., "service_name.yaml").
+    /// Load and monitor a new service from its configuration file (e.g., "service_name.toml").
     #[method(name = "monitor")]
     async fn monitor(&self, name: String) -> RpcResult<()>;
 
@@ -205,8 +205,8 @@ pub trait ZinitServiceApi {
     #[method(name = "kill")]
     async fn kill(&self, name: String, signal: String) -> RpcResult<()>;
 
-    /// Create a new service configuration file (e.g., "service_name.yaml")
-    /// with the provided content (JSON map representing YAML structure).
+    /// Create a new service configuration file (e.g., "service_name.toml")
+    /// with the provided content (JSON map representing TOML structure).
     /// Returns a success message string.
     #[method(name = "create")]
     async fn create(&self, name: String, content: Map<String, Value>) -> RpcResult<String>;
@@ -306,15 +306,15 @@ impl ZinitServiceApiServer for Api {
             return Err(invalid_service_name_error("monitoring service", &name));
         }
 
-        let (name_str, service) = config::load(format!("{}.yaml", name)).map_err(|e| {
+        let (name_str, service) = config::load(format!("{}.toml", name)).map_err(|e| {
             ErrorObjectOwned::owned(
                 CONFIG_ERROR,
-                format!("monitoring service: failed to load '{}.yaml'", name),
+                format!("monitoring service: failed to load '{}.toml': {}", name, e),
                 Some(json!({
                     "code_name": "ConfigError",
                     "action": "loading service config",
                     "service": name,
-                    "hint": "Verify the YAML file exists and is valid"
+                    "hint": "Verify the TOML file exists and is valid"
                 })),
             )
         })?;
@@ -369,7 +369,7 @@ impl ZinitServiceApiServer for Api {
         }
 
         // Construct the file path
-        let file_path = PathBuf::from(format!("{}.yaml", &name));
+        let file_path = PathBuf::from(format!("{}.toml", &name));
 
         // Check if the service file already exists
         if file_path.exists() {
@@ -385,11 +385,11 @@ impl ZinitServiceApiServer for Api {
             ));
         }
 
-        // Convert the JSON content to YAML
-        let yaml_content = serde_yaml::to_string(&content).map_err(|e| {
+        // Convert the JSON content to TOML and validate it before writing.
+        let toml_content = toml::to_string(&content).map_err(|e| {
             ErrorObjectOwned::owned(
                 CONFIG_ERROR,
-                "creating service: failed to convert content to YAML".to_string(),
+                format!("creating service: failed to convert content to TOML: {}", e),
                 Some(json!({
                     "code_name": "ConfigError",
                     "action": "serializing service config",
@@ -399,7 +399,22 @@ impl ZinitServiceApiServer for Api {
             )
         })?;
 
-        // Write the YAML content to the file
+        let service: config::Service = toml::from_str(&toml_content).map_err(|e| {
+            ErrorObjectOwned::owned(
+                CONFIG_ERROR,
+                format!("creating service: invalid service configuration: {}", e),
+                Some(json!({ "code_name": "ConfigError", "service": name })),
+            )
+        })?;
+        service.validate().map_err(|e| {
+            ErrorObjectOwned::owned(
+                CONFIG_ERROR,
+                format!("creating service: invalid service configuration: {}", e),
+                Some(json!({ "code_name": "ConfigError", "service": name })),
+            )
+        })?;
+
+        // Write the TOML content to the file
         let mut file = fs::File::create(&file_path).map_err(|_| {
             service_file_error(
                 "creating service file",
@@ -408,7 +423,7 @@ impl ZinitServiceApiServer for Api {
             )
         })?;
 
-        file.write_all(yaml_content.as_bytes()).map_err(|_| {
+        file.write_all(toml_content.as_bytes()).map_err(|_| {
             service_file_error(
                 "writing service file",
                 &name,
@@ -429,7 +444,7 @@ impl ZinitServiceApiServer for Api {
         }
 
         // Construct the file path
-        let file_path = PathBuf::from(format!("{}.yaml", &name));
+        let file_path = PathBuf::from(format!("{}.toml", &name));
 
         // Check if the service file exists
         if !file_path.exists() {
@@ -467,7 +482,7 @@ impl ZinitServiceApiServer for Api {
         }
 
         // Construct the file path
-        let file_path = PathBuf::from(format!("{}.yaml", &name));
+        let file_path = PathBuf::from(format!("{}.toml", &name));
 
         // Check if the service file exists
         if !file_path.exists() {
@@ -484,32 +499,32 @@ impl ZinitServiceApiServer for Api {
         }
 
         // Read the file content
-        let yaml_content = fs::read_to_string(&file_path).map_err(|_| {
+        let toml_content = fs::read_to_string(&file_path).map_err(|_| {
             service_file_error("reading service file", &name, "failed to read service file")
         })?;
 
-        // Parse YAML to JSON
-        let yaml_value: serde_yaml::Value = serde_yaml::from_str(&yaml_content).map_err(|_| {
+        // Parse TOML to JSON
+        let toml_value: toml::Value = toml::from_str(&toml_content).map_err(|e| {
             ErrorObjectOwned::owned(
                 CONFIG_ERROR,
-                "getting service: failed to parse YAML".to_string(),
+                format!("getting service: failed to parse TOML: {}", e),
                 Some(json!({
                     "code_name": "ConfigError",
                     "action": "parsing service file",
                     "service": name,
-                    "hint": "Ensure the YAML is valid"
+                    "hint": "Ensure the TOML is valid"
                 })),
             )
         })?;
 
-        // Convert YAML value to JSON value
-        let json_value = serde_json::to_value(yaml_value).map_err(|_| {
+        // Convert TOML value to JSON value
+        let json_value = serde_json::to_value(toml_value).map_err(|_| {
             ErrorObjectOwned::owned(
                 CONFIG_ERROR,
-                "getting service: failed to convert YAML to JSON".to_string(),
+                "getting service: failed to convert TOML to JSON".to_string(),
                 Some(json!({
                     "code_name": "ConfigError",
-                    "action": "converting YAML to JSON",
+                    "action": "converting TOML to JSON",
                     "service": name
                 })),
             )
@@ -675,5 +690,28 @@ impl ZinitLoggingApiServer for Api {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rpc_service_content_serializes_as_toml() {
+        let content = json!({
+            "exec": ["/bin/echo", "two words"],
+            "shutdown_timeout": "500ms",
+            "on_crash": ["/bin/false"],
+            "env": { "MODE": "test" }
+        });
+        let toml = toml::to_string(content.as_object().unwrap()).unwrap();
+        let service: config::Service = toml::from_str(&toml).unwrap();
+        service.validate().unwrap();
+        assert_eq!(service.exec[1], "two words");
+        assert_eq!(
+            service.shutdown_timeout,
+            std::time::Duration::from_millis(500)
+        );
     }
 }

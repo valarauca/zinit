@@ -74,7 +74,7 @@ use serde_json::json;
 
 // Create a new service
 let config = json!({
-    "exec": "nginx",
+    "exec": ["nginx"],
     "oneshot": false,
     "after": ["network"]
 }).as_object().unwrap().clone();

@@ -46,7 +46,7 @@ async fn main() {
 //     testapp::create_service_config(
 //         &config_dir,
 //         "find-service",
-//         "find / -name \"*.txt\" -type f",
+//         &["find", "/", "-name", "*.txt", "-type", "f"],
 //     )
 //     .await?;
 
@@ -54,7 +54,7 @@ async fn main() {
 //     testapp::create_service_config(
 //         &config_dir,
 //         "sleep-service",
-//         "sh -c 'echo Starting sleep; sleep 30; echo Finished sleep'",
+//         &["sh", "-c", "echo Starting sleep; sleep 30; echo Finished sleep"],
 //     )
 //     .await?;
 
@@ -123,7 +123,7 @@ async fn main() {
 //     // Create a new service using the API
 //     println!("Creating a new service via API...");
 //     let service_content = json!({
-//         "exec": "echo 'Hello from API-created service'",
+//         "exec": ["echo", "Hello from API-created service"],
 //         "oneshot": true,
 //         "log": "stdout"
 //     })

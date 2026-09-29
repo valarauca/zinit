@@ -37,7 +37,7 @@ zinit init [FLAGS] [OPTIONS]
 - `--container`: Run in container mode, exiting on signal instead of rebooting
 
 **Options:**
-- `-c, --config <DIR>`: Service configurations directory (default: `/etc/zinit/`)
+- `-c, --config <DIR>`: Directory containing `<service-name>.toml` files (default: `/etc/zinit/`)
 - `-b, --buffer <SIZE>`: Buffer size (in lines) to keep service logs (default: `2000`)
 
 **Example:**
@@ -60,7 +60,7 @@ zinit list
 ```
 
 **Output:**
-A JSON object with service names as keys and their status as values.
+A YAML map with service names as keys and their status as values.
 
 **Example:**
 ```bash

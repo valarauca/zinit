@@ -14,8 +14,8 @@ fi
 
 SERVICE_NAME="test_service"
 CPU_SERVICE_NAME="cpu_test_service"
-SERVICE_FILE="$ZINIT_CONFIG_DIR/$SERVICE_NAME.yaml"
-CPU_SERVICE_FILE="$ZINIT_CONFIG_DIR/$CPU_SERVICE_NAME.yaml"
+SERVICE_FILE="$ZINIT_CONFIG_DIR/$SERVICE_NAME.toml"
+CPU_SERVICE_FILE="$ZINIT_CONFIG_DIR/$CPU_SERVICE_NAME.toml"
 
 echo "--- Zinit Example Script ---"
 echo "Zinit binary path: $ZINIT_BIN"
@@ -52,9 +52,8 @@ fi
 # Step 3: Create sample zinit service files
 echo "Creating sample service file: $SERVICE_FILE"
 cat <<EOF > "$SERVICE_FILE"
-name: $SERVICE_NAME
-exec: /bin/bash -c "while true; do echo 'Hello from $SERVICE_NAME!'; sleep 5; done"
-log: stdout
+exec = ["/bin/bash", "-c", "while true; do echo Hello from $SERVICE_NAME!; sleep 5; done"]
+log = "stdout"
 EOF
 
 if [ $? -ne 0 ]; then
@@ -66,9 +65,8 @@ echo "Service file created."
 # Create a CPU-intensive service with child processes
 echo "Creating CPU-intensive service file: $CPU_SERVICE_FILE"
 cat <<EOF > "$CPU_SERVICE_FILE"
-name: $CPU_SERVICE_NAME
-exec: /bin/bash -c "for i in {1..3}; do (yes > /dev/null &) ; done; while true; do sleep 10; done"
-log: stdout
+exec = ["/bin/bash", "-c", "for i in {1..3}; do (yes > /dev/null &) ; done; while true; do sleep 10; done"]
+log = "stdout"
 EOF
 
 if [ $? -ne 0 ]; then

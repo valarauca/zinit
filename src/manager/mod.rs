@@ -182,7 +182,13 @@ impl ProcessManager {
             child.current_dir("/")
         };
 
-        let child = child.args(&args[1..]).envs(&self.env.0).envs(cmd.env);
+        // /etc/environment provides defaults, while container/runtime variables
+        // (including PATH, CUDA, and RunPod settings) must retain precedence.
+        let child = child
+            .args(&args[1..])
+            .envs(&self.env.0)
+            .envs(std::env::vars_os())
+            .envs(cmd.env);
 
         let child = match log {
             Log::None => child.stdout(Stdio::null()).stderr(Stdio::null()),

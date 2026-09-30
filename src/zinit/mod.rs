@@ -48,15 +48,20 @@ impl ZInit {
                 let mut term = unix::signal(unix::SignalKind::terminate()).unwrap();
                 let mut int = unix::signal(unix::SignalKind::interrupt()).unwrap();
                 let mut hup = unix::signal(unix::SignalKind::hangup()).unwrap();
+                let mut failure = unix::signal(unix::SignalKind::user_defined1()).unwrap();
 
-                tokio::select! {
-                    _ = term.recv() => {},
-                    _ = int.recv() => {},
-                    _ = hup.recv() => {},
+                let exit_code = tokio::select! {
+                    _ = term.recv() => 0,
+                    _ = int.recv() => 0,
+                    _ = hup.recv() => 0,
+                    _ = failure.recv() => 1,
                 };
 
                 debug!("shutdown signal received");
-                let _ = lifecycle.shutdown().await;
+                if let Err(err) = lifecycle.shutdown_with_exit_code(exit_code).await {
+                    error!("ordered container shutdown failed: {}", err);
+                    std::process::exit(1);
+                }
             });
         }
     }

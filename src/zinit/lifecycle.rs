@@ -36,6 +36,7 @@ use nix::sys::signal;
 use nix::sys::wait::WaitStatus;
 use nix::unistd::Pid;
 use std::str::FromStr;
+use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::Arc;
 #[cfg(target_os = "linux")]
 use tokio::sync::mpsc;
@@ -63,6 +64,8 @@ pub struct LifecycleManager {
 
     /// Whether running in container mode
     container: bool,
+    /// Container exit status selected by a controlled failure shutdown.
+    exit_code: Arc<AtomicI32>,
 }
 
 impl LifecycleManager {
@@ -80,6 +83,7 @@ impl LifecycleManager {
             notify,
             shutdown,
             container,
+            exit_code: Arc::new(AtomicI32::new(0)),
         }
     }
 
@@ -169,6 +173,7 @@ impl LifecycleManager {
 
         // Get the main process PID
         let pid = service.pid;
+        let shutdown_timeout = service.service.shutdown_timeout;
         if pid.as_raw() == 0 {
             return Ok(());
         }
@@ -187,8 +192,18 @@ impl LifecycleManager {
         // First try to stop the process group
         let _ = self.pm.signal(pid, signal);
 
-        // Wait a short time for processes to terminate gracefully
-        sleep(std::time::Duration::from_millis(500)).await;
+        // Respect the service's grace period for the whole descendant tree.
+        let deadline = tokio::time::Instant::now() + shutdown_timeout;
+        loop {
+            let mut running = self.is_process_running(pid.as_raw()).await?;
+            for child in &children {
+                running |= self.is_process_running(child.pid).await?;
+            }
+            if !running || tokio::time::Instant::now() >= deadline {
+                break;
+            }
+            sleep(Duration::from_millis(50)).await;
+        }
 
         // Check if processes are still running and use SIGKILL if needed
         self.ensure_processes_terminated(pid.as_raw(), &children)
@@ -475,6 +490,12 @@ impl LifecycleManager {
     }
 
     /// Shutdown the system
+    pub async fn shutdown_with_exit_code(&self, code: i32) -> Result<()> {
+        self.exit_code.store(code, Ordering::SeqCst);
+        self.shutdown().await
+    }
+
+    /// Shutdown the system
     pub async fn shutdown(&self) -> Result<()> {
         info!("shutting down");
 
@@ -573,11 +594,10 @@ impl LifecycleManager {
         self.kill_process_tree(dag, state_channels, shutdown_timeouts)
             .await?;
 
-        // On Linux, we can use sync and reboot
-        nix::unistd::sync();
         if self.container {
-            std::process::exit(0);
+            std::process::exit(self.exit_code.load(Ordering::SeqCst));
         } else {
+            nix::unistd::sync();
             nix::sys::reboot::reboot(mode)?;
         }
 
@@ -873,6 +893,10 @@ impl LifecycleManager {
         loop {
             let name = name.clone();
 
+            if *self.shutdown.read().await {
+                break;
+            }
+
             let service = input.read().await;
             // early check if service is down, so we don't have to do extra checks
             if service.target == Target::Down {
@@ -1040,6 +1064,7 @@ impl LifecycleManager {
             notify: Arc::clone(&self.notify),
             shutdown: Arc::clone(&self.shutdown),
             container: self.container,
+            exit_code: Arc::clone(&self.exit_code),
         }
     }
 }

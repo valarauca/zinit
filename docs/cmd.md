@@ -36,6 +36,11 @@ zinit init [FLAGS] [OPTIONS]
 **Flags:**
 - `--container`: Run in container mode, exiting on signal instead of rebooting
 
+In container mode, SIGTERM, SIGINT, and SIGHUP perform dependency-ordered shutdown
+and exit with status 0. SIGUSR1 performs the same shutdown and exits with status 1,
+so a service's `on_crash` hook can fail the container cleanly. Services receive
+their configured stop signals; those controlled stops do not run crash hooks.
+
 **Options:**
 - `-c, --config <DIR>`: Directory containing `<service-name>.toml` files (default: `/etc/zinit/`)
 - `-b, --buffer <SIZE>`: Buffer size (in lines) to keep service logs (default: `2000`)

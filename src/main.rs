@@ -197,13 +197,19 @@ async fn main() -> Result<()> {
         ("init", Some(matches)) => {
             let _server = app::init(
                 matches.value_of("buffer").unwrap().parse().unwrap(),
-                &config_path, // Use the determined config_path
+                matches.value_of("config").unwrap_or(&config_path),
                 socket,
                 matches.is_present("container"),
                 debug,
             )
             .await?;
-            tokio::signal::ctrl_c().await?;
+            if matches.is_present("container") {
+                // Container signals belong to ZInit::serve. Returning here on
+                // SIGINT races its asynchronous, dependency-ordered shutdown.
+                std::future::pending::<()>().await;
+            } else {
+                tokio::signal::ctrl_c().await?;
+            }
             Ok(())
         }
         ("list", _) => app::list(socket).await,

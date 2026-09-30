@@ -1,4 +1,4 @@
-# ZOS Init [![Rust](https://github.com/threefoldtech/zinit/actions/workflows/rust.yml/badge.svg)](https://github.com/threefoldtech/zinit/actions/workflows/rust.yml)
+# ZOS Init [![Rust](https://github.com/valarauca/zinit/actions/workflows/rust.yml/badge.svg)](https://github.com/valarauca/zinit/actions/workflows/rust.yml)
 
 ZOS Init is a lightweight PID 1 replacement inspired by runit, written in Rust using Tokio for async I/O. It manages service startup, supervision, and lifecycle, ensuring configured services remain running and handling dependencies through a simple declarative interface.
 
@@ -34,14 +34,17 @@ This repository is owned and maintained by TF-Tech NV, a Belgian company respons
 
 ## Installation
 
-```bash
-curl https://raw.githubusercontent.com/threefoldtech/zinit/refs/heads/master/install.sh | bash
+Pushing a tag builds Linux x86_64 binaries for musl and glibc. Each [release](https://github.com/valarauca/zinit/releases) includes standalone binaries, `.tar.gz` bundles containing `zinit` and `LICENSE`, and `SHA256SUMS`. The musl binary is statically linked; the glibc binary targets Ubuntu 26.04 / glibc 2.43 worker images.
 
-# to install & run
-curl https://raw.githubusercontent.com/threefoldtech/zinit/refs/heads/master/install_run.sh | bash
+```bash
+gh release download vX.Y.Z --repo valarauca/zinit \
+  --pattern zinit-linux-x86_64-musl.tar.gz --pattern SHA256SUMS
+sha256sum --ignore-missing --check SHA256SUMS
+tar -xzf zinit-linux-x86_64-musl.tar.gz
+sudo install -m 0755 zinit /usr/local/bin/zinit
 ```
 
-Click [here](docs/installation.md) for more information on how to install ZOS Init.
+See the [installation guide](docs/installation.md) for release automation and container build examples. Authenticate `gh` first when downloading from a private repository.
 
 ## Usage
 

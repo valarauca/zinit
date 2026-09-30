@@ -11,18 +11,44 @@ Zinit has minimal system requirements:
 
 ## Pre-built Binaries
 
-If pre-built binaries are available for your system, you can install them directly:
+Every pushed tag runs the release workflow and builds two Linux x86_64 variants:
+
+| Rust target | Release binary | Container compatibility |
+| --- | --- | --- |
+| `x86_64-unknown-linux-musl` | `zinit-linux-x86_64-musl` | Statically linked; Alpine, Ubuntu, Debian, and other Linux bases |
+| `x86_64-unknown-linux-gnu` | `zinit-linux-x86_64-gnu` | Built on Ubuntu 26.04; supported baseline glibc 2.43 |
+
+Each binary has a matching `.tar.gz` bundle containing an executable named `zinit` and `LICENSE`. `SHA256SUMS` covers both standalone binaries and bundles. ARM and macOS releases are currently out of scope.
+
+Use GitHub CLI to download a pinned version. Run `gh auth login` first, or set `GH_TOKEN` in CI; this also works if the repository is private.
 
 ```bash
-# Download the binary (replace with actual URL)
-wget https://github.com/threefoldtech/zinit/releases/download/vX.Y.Z/zinit-x86_64-unknown-linux-musl
-
-# Make it executable
-chmod +x zinit-x86_64-unknown-linux-musl
-
-# Move to a location in your PATH
-sudo mv zinit-x86_64-unknown-linux-musl /usr/local/bin/zinit
+# Use zinit-linux-x86_64-gnu.tar.gz for the glibc build.
+gh release download vX.Y.Z --repo valarauca/zinit \
+  --pattern zinit-linux-x86_64-musl.tar.gz --pattern SHA256SUMS
+sha256sum --ignore-missing --check SHA256SUMS
+tar -xzf zinit-linux-x86_64-musl.tar.gz
+sudo install -m 0755 zinit /usr/local/bin/zinit
 ```
+
+### Creating a release
+
+Commit and push the workflow changes before creating a tag at the commit you want to release:
+
+```bash
+git tag v0.2.1
+git push origin v0.2.1
+```
+
+All tags trigger a build. Semver tags with a prerelease suffix, such as `v0.2.1-rc.1`, create a GitHub prerelease. The workflow uses the repository's automatic `GITHUB_TOKEN`; no extra release secret is needed. Release automation builds and bundles the artifacts, generates checksums, and publishes once both builds finish. Tests remain in local development and the Rust workflow on branch pushes.
+
+To build an existing tag manually once the workflow is on the default branch:
+
+```bash
+gh workflow run release.yaml --repo valarauca/zinit --ref v0.2.1
+```
+
+Manual runs must select a tag; branch runs skip release jobs. Failed builds do not publish a release. A failed upload leaves a new release as a draft, and rerunning the workflow retries its uploads.
 
 ## Building from Source
 
@@ -69,7 +95,7 @@ apk add build-base
 1. Clone the repository:
 
 ```bash
-git clone https://github.com/threefoldtech/zinit.git
+git clone git@github.com:valarauca/zinit.git
 cd zinit
 ```
 
@@ -110,29 +136,47 @@ docker run -dt --device=/dev/kmsg:/dev/kmsg:rw zinit
 ```
 > Don't forget to port-forward a port to get access to the Zinit proxy using the `-p XXXX:YYYY` flag when running the container.
 
-### Custom Docker Setup
+### Adding a release binary to a worker image
 
-To create your own Dockerfile with Zinit:
+Download and verify the binary before building the image. This keeps GitHub authentication in your local environment or CI job. From your worker image's build context:
+
+```bash
+version=vX.Y.Z
+variant=musl # Use gnu for Ubuntu 26.04 / glibc 2.43 workers.
+mkdir -p vendor/zinit
+gh release download "$version" --repo valarauca/zinit --dir vendor/zinit \
+  --pattern "zinit-linux-x86_64-$variant" --pattern SHA256SUMS
+(cd vendor/zinit && sha256sum --ignore-missing --check SHA256SUMS)
+install -m 0755 "vendor/zinit/zinit-linux-x86_64-$variant" vendor/zinit/zinit
+```
+
+Then add Zinit and your daemon configurations to the worker Dockerfile:
 
 ```dockerfile
-FROM alpine:latest
+FROM ubuntu:26.04
+COPY --chmod=0755 vendor/zinit/zinit /usr/local/bin/zinit
 
-# Install dependencies if needed
-RUN apk add --no-cache bash curl
-
-# Copy the zinit binary
-COPY zinit /usr/local/bin/zinit
-RUN chmod +x /usr/local/bin/zinit
-
-# Create configuration directory
 RUN mkdir -p /etc/zinit
-
-# Add your service configurations
 COPY services/*.toml /etc/zinit/
-
-# Set zinit as the entrypoint
+STOPSIGNAL SIGTERM
 ENTRYPOINT ["/usr/local/bin/zinit", "init", "--container"]
 ```
+
+Use your Runpod worker base image in place of `ubuntu:26.04`, and configure its daemons in `services/*.toml`. For example:
+
+```toml
+exec = ["python3", "-u", "/app/worker.py"]
+log = "stdout"
+shutdown_timeout = "30s"
+```
+
+Build the worker for x86_64:
+
+```bash
+docker buildx build --platform linux/amd64 --load -t my-worker:local .
+```
+
+Keep the container's stop grace period longer than the configured service shutdown timeouts so Zinit can finish stopping its daemons.
 
 ## Using Zinit as the Init System
 

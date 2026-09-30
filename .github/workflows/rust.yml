@@ -1,36 +1,30 @@
 name: Rust
 
-on: [push]
+on:
+  push:
+    branches:
+      - "**"
+
+permissions:
+  contents: read
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         name: Checkout code
         with:
           fetch-depth: 1
-      - uses: actions-rs/toolchain@v1
-        name: Install toolchain
-        with:
-          toolchain: stable
-          target: x86_64-unknown-linux-musl
-      - uses: actions-rs/cargo@v1
-        name: Check formatting
-        with:
-          command: fmt
-          args: -- --check
-      - uses: actions-rs/cargo@v1
-        name: Run tests (ahm!)
-        with:
-          command: test
-          args: --verbose
-      - uses: actions-rs/cargo@v1
-        name: Run clippy
-        with:
-          command: clippy
-      - uses: actions-rs/cargo@v1
-        name: Build
-        with:
-          command: build
-          args: --verbose
+      - name: Install toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update --component rustfmt --component clippy
+          rustup override set stable
+      - name: Check formatting
+        run: cargo fmt -- --check
+      - name: Run tests
+        run: cargo test --locked --verbose
+      - name: Run clippy
+        run: cargo clippy --locked
+      - name: Build
+        run: cargo build --locked --verbose
